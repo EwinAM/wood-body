@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item -Recurse "build/WoodBodyOne_artefacts/Release/VST3/Wood Body ONE.vst3" dist/
+          Compress-Archive -Path "dist/Wood Body ONE.vst3" -DestinationPath WoodBodyONE-Windows-VST3.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoodBodyONE-Windows-VST3
+          path: WoodBodyONE-Windows-VST3.zip
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Ad-hoc sign
+        run: |
+          codesign --force --deep -s - "build/WoodBodyOne_artefacts/Release/AU/Wood Body ONE.component"
+          codesign --force --deep -s - "build/WoodBodyOne_artefacts/Release/VST3/Wood Body ONE.vst3"
+      - name: Package
+        run: |
+          cd build/WoodBodyOne_artefacts/Release
+          ditto -c -k --keepParent "AU/Wood Body ONE.component" "$GITHUB_WORKSPACE/WoodBodyONE-macOS-AU.zip"
+          ditto -c -k --keepParent "VST3/Wood Body ONE.vst3" "$GITHUB_WORKSPACE/WoodBodyONE-macOS-VST3.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoodBodyONE-macOS
+          path: |
+            WoodBodyONE-macOS-AU.zip
+            WoodBodyONE-macOS-VST3.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ windows, macos ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.zip
